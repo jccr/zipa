@@ -27,6 +27,7 @@ type Writer struct {
 	last        *fileWriter
 	closed      bool
 	compressors map[uint16]Compressor
+	names       map[string]int // filename -> index in dir slice.
 	comment     string
 
 	// testHookCloseSizeOffset if non-nil is called with the size
@@ -53,6 +54,25 @@ func (w *Writer) SetOffset(n int64) {
 		panic("zip: SetOffset called after data was written")
 	}
 	w.cw.count = n
+}
+
+func newAppendingWriter(r *Reader, fw io.Writer) *Writer {
+	w := &Writer{
+		cw: &countWriter{
+			w:     bufio.NewWriter(fw),
+			count: r.AppendOffset(),
+		},
+		dir:   make([]*header, len(r.File), len(r.File)*3/2),
+		names: make(map[string]int),
+	}
+	for i, f := range r.File {
+		w.dir[i] = &header{
+			FileHeader: &f.FileHeader,
+			offset:     uint64(f.headerOffset),
+		}
+		w.names[f.Name] = i
+	}
+	return w
 }
 
 // Flush flushes any buffered data to the underlying writer.
@@ -87,7 +107,14 @@ func (w *Writer) Close() error {
 
 	// write central directory
 	start := w.cw.count
+	records := uint64(0)
 	for _, h := range w.dir {
+		if h.FileHeader == nil {
+			// This entry has been superceded by a later
+			// appended entry.
+			continue
+		}
+		records++
 		var buf [directoryHeaderLen]byte
 		b := writeBuf(buf[:])
 		b.uint32(uint32(directoryHeaderSignature))
@@ -144,7 +171,6 @@ func (w *Writer) Close() error {
 	}
 	end := w.cw.count
 
-	records := uint64(len(w.dir))
 	size := uint64(end - start)
 	offset := uint64(start)
 
@@ -222,6 +248,15 @@ func (w *Writer) Create(name string) (io.Writer, error) {
 	return w.CreateHeader(header)
 }
 
+func (w *Writer) closeLastWriter() error {
+	if w.last != nil && !w.last.closed {
+		err := w.last.close()
+		w.last = nil
+		return err
+	}
+	return nil
+}
+
 // detectUTF8 reports whether s is a valid UTF-8 string, and whether the string
 // must be considered UTF-8 encoding (i.e., not compatible with CP-437, ASCII,
 // or any other common encoding).
@@ -253,14 +288,19 @@ func detectUTF8(s string) (valid, require bool) {
 // The file's contents must be written to the io.Writer before the next
 // call to Create, CreateHeader, or Close.
 func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
-	if w.last != nil && !w.last.closed {
-		if err := w.last.close(); err != nil {
-			return nil, err
-		}
+	if err := w.closeLastWriter(); err != nil {
+		return nil, err
 	}
 	if len(w.dir) > 0 && w.dir[len(w.dir)-1].FileHeader == fh {
 		// See https://golang.org/issue/11144 confusion.
 		return nil, errors.New("archive/zip: invalid duplicate FileHeader")
+	}
+	if i, ok := w.names[fh.Name]; ok {
+		// We're appending a file that existed already,
+		// so clear out the old entry so that it won't
+		// be added to the index.
+		w.dir[i].FileHeader = nil
+		delete(w.names, fh.Name)
 	}
 
 	// The ZIP format has a sad state of affairs regarding character encoding.
@@ -373,6 +413,37 @@ func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
 	return ow, nil
 }
 
+// Copy copies the file f (obtained from a Reader) into w.
+// It copies the compressed form directly.
+func (w *Writer) Copy(f *File) error {
+	dataOffset, err := f.DataOffset()
+	if err != nil {
+		return err
+	}
+	if err := w.closeLastWriter(); err != nil {
+		return err
+	}
+
+	fh := f.FileHeader
+	h := &header{
+		FileHeader: &fh,
+		offset:     uint64(w.cw.count),
+	}
+	fh.Flags |= 0x8 // we will write a data descriptor
+	w.dir = append(w.dir, h)
+
+	if err := writeHeader(w.cw, &fh); err != nil {
+		return err
+	}
+
+	r := io.NewSectionReader(f.zipr, dataOffset, int64(f.CompressedSize64))
+	if _, err := io.Copy(w.cw, r); err != nil {
+		return err
+	}
+
+	return writeDesc(w.cw, &fh)
+}
+
 func writeHeader(w io.Writer, h *FileHeader) error {
 	const maxUint16 = 1<<16 - 1
 	if len(h.Name) > maxUint16 {
@@ -474,6 +545,10 @@ func (w *fileWriter) close() error {
 		fh.UncompressedSize = uint32(fh.UncompressedSize64)
 	}
 
+	return writeDesc(w.zipw, fh)
+}
+
+func writeDesc(w io.Writer, fh *FileHeader) error {
 	// Write data descriptor. This is more complicated than one would
 	// think, see e.g. comments in zipfile.c:putextended() and
 	// http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=7073588.
@@ -495,7 +570,7 @@ func (w *fileWriter) close() error {
 		b.uint32(fh.CompressedSize)
 		b.uint32(fh.UncompressedSize)
 	}
-	_, err := w.zipw.Write(buf)
+	_, err := w.Write(buf)
 	return err
 }
 

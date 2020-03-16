@@ -26,6 +26,8 @@ type Reader struct {
 	File          []*File
 	Comment       string
 	decompressors map[uint16]Decompressor
+	size          int64
+	dirOffset     int64
 }
 
 type ReadCloser struct {
@@ -84,6 +86,8 @@ func (z *Reader) init(r io.ReaderAt, size int64) error {
 		return err
 	}
 	z.r = r
+	z.size = size
+	z.dirOffset = int64(end.directoryOffset)
 	z.File = make([]*File, 0, end.directoryRecords)
 	z.Comment = end.comment
 	rs := io.NewSectionReader(r, 0, size)
@@ -176,6 +180,20 @@ func (f *File) Open() (io.ReadCloser, error) {
 		desr: desr,
 	}
 	return rc, nil
+}
+
+// TODO: Document.
+func (z *Reader) AppendOffset() int64 {
+	return z.dirOffset
+}
+
+// Append appends entries to the existing zip archive represented by z.
+// The writer w should be positioned at the end of the archive data.
+// When the returned writer is closed, any entries with names that
+// already exist in the archive will have been "replaced" by the new
+// entries, although the original data will still be there.
+func (z *Reader) Append(w io.Writer) *Writer {
+	return newAppendingWriter(z, w)
 }
 
 type checksumReader struct {

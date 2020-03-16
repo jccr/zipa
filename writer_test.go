@@ -247,6 +247,98 @@ func TestWriterTime(t *testing.T) {
 	}
 }
 
+func TestWriterCopy(t *testing.T) {
+	// make a zip file
+	buf := new(bytes.Buffer)
+	w := NewWriter(buf)
+	for _, wt := range writeTests {
+		testCreate(t, w, &wt)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// read it back
+	src, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, wt := range writeTests {
+		testReadFile(t, src.File[i], &wt)
+	}
+
+	// make a new zip file copying the old compressed data.
+	buf2 := new(bytes.Buffer)
+	dst := NewWriter(buf2)
+	for _, f := range src.File {
+		if err := dst.Copy(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// read the new one back
+	r, err := NewReader(bytes.NewReader(buf2.Bytes()), int64(buf2.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, wt := range writeTests {
+		testReadFile(t, r.File[i], &wt)
+	}
+}
+
+func TestAppend(t *testing.T) {
+	// write a zip file
+	buf := new(bytes.Buffer)
+	w := NewWriter(buf)
+
+	for _, wt := range writeTests {
+		testCreate(t, w, &wt)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// read it back
+	r, err := NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// append a file to it.
+	abuf := new(bytes.Buffer)
+	abuf.Write(buf.Bytes()[:r.AppendOffset()])
+	w = r.Append(abuf)
+
+	wt := WriteTest{
+		Name:   "foo",
+		Data:   []byte("Badgers, canines, weasels, owls, and snakes"),
+		Method: Store,
+		Mode:   0755,
+	}
+	testCreate(t, w, &wt)
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// read the whole thing back.
+	allBytes := abuf.Bytes()
+
+	r, err = NewReader(bytes.NewReader(allBytes), int64(len(allBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeTests := append(writeTests[1:], wt)
+	for i, wt := range writeTests {
+		testReadFile(t, r.File[i], &wt)
+	}
+}
+
 func TestWriterOffset(t *testing.T) {
 	largeData := make([]byte, 1<<17)
 	if _, err := rand.Read(largeData); err != nil {
