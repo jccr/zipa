@@ -11,9 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"internal/testenv"
 	"io"
 	"io/ioutil"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -22,7 +22,7 @@ import (
 )
 
 func TestOver65kFiles(t *testing.T) {
-	if testing.Short() && testenv.Builder() == "" {
+	if testing.Short() && os.Getenv("GO_BUILDER_NAME") == "" {
 		t.Skip("skipping in short mode")
 	}
 	buf := new(bytes.Buffer)

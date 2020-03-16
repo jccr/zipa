@@ -6,9 +6,9 @@ package zip
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"internal/obscuretestdata"
 	"io"
 	"io/ioutil"
 	"os"
@@ -504,7 +504,7 @@ func readTestZip(t *testing.T, zt ZipTest) {
 	} else {
 		path := filepath.Join("testdata", zt.Name)
 		if zt.Obscured {
-			tf, err := obscuretestdata.DecodeToTempFile(path)
+			tf, err := DecodeToTempFile(path)
 			if err != nil {
 				t.Errorf("obscuretestdata.DecodeToTempFile(%s): %v", path, err)
 				return
@@ -1069,4 +1069,30 @@ func TestIssue12449(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error reading the archive: %v", err)
 	}
+}
+
+// DecodeToTempFile decodes the named file to a temporary location.
+// If successful, it returns the path of the decoded file.
+// The caller is responsible for ensuring that the temporary file is removed.
+func DecodeToTempFile(name string) (path string, err error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	tmp, err := ioutil.TempFile("", "obscuretestdata-decoded-")
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(tmp, base64.NewDecoder(base64.StdEncoding, f)); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
 }
