@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package zip_test
+package zipa_test
 
 import (
-	"archive/zip"
 	"bytes"
 	"compress/flate"
 	"fmt"
 	"io"
 	"log"
 	"os"
+
+	"github.com/jccr/zipa"
 )
 
 func ExampleWriter() {
@@ -19,7 +20,7 @@ func ExampleWriter() {
 	buf := new(bytes.Buffer)
 
 	// Create a new zip archive.
-	w := zip.NewWriter(buf)
+	w := zipa.NewWriter(buf)
 
 	// Add some files to the archive.
 	var files = []struct {
@@ -49,7 +50,7 @@ func ExampleWriter() {
 
 func ExampleReader() {
 	// Open a zip archive for reading.
-	r, err := zip.OpenReader("testdata/readme.zip")
+	r, err := zipa.OpenReader("testdata/readme.zip")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -82,10 +83,10 @@ func ExampleWriter_RegisterCompressor() {
 	buf := new(bytes.Buffer)
 
 	// Create a new zip archive.
-	w := zip.NewWriter(buf)
+	w := zipa.NewWriter(buf)
 
 	// Register a custom Deflate compressor.
-	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+	w.RegisterCompressor(zipa.Deflate, func(out io.Writer) (io.WriteCloser, error) {
 		return flate.NewWriter(out, flate.BestCompression)
 	})
 

@@ -4,7 +4,7 @@
 
 // Tests that involve both reading and writing.
 
-package zip
+package zipa
 
 import (
 	"bytes"
